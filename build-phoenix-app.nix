@@ -3,14 +3,12 @@
   pname,
   src,
   version,
-  mixDepsSha256,
+  system,
   tailwind ? pkgs.tailwindcss,
   esbuild ? pkgs.esbuild,
-  tailwindPath ? "_build/tailwind-x86_64-linux",
-  esbuildPath ? "_build/esbuild-x86_64-linux",
   erlangVersion ? "erlangR25",
   elixirVersion ? "elixir_1_14",
-  beamPkgs ?
+  beamPackages ?
     with pkgs.beam_minimal;
       packagesWith (interpreters.${erlangVersion}.override {
         configureFlags = [
@@ -23,20 +21,56 @@
         ];
         installTargets = ["install"];
       }),
-  elixir ? beamPkgs.${elixirVersion},
-  erlang ? beamPkgs.erlang,
-  fetchMixDeps ? beamPkgs.fetchMixDeps.override {inherit elixir;},
-  mixRelease ? beamPkgs.mixRelease.override {inherit elixir erlang fetchMixDeps;},
-  mixFodDeps ?
-    fetchMixDeps {
-      inherit version src;
-      pname = "${pname}-elixir-deps";
-      sha256 = mixDepsSha256;
-    },
-}: {
+  elixir ? beamPackages.${elixirVersion},
+  erlang ? beamPackages.erlang,
+  fetchMixDeps ? beamPackages.fetchMixDeps.override {inherit elixir;},
+  mixRelease ? beamPackages.mixRelease.override {inherit elixir erlang fetchMixDeps;},
+  mixDepsSha256 ? null,
+  mix2NixOutput ? null,
+}:
+assert mixDepsSha256 != null -> mix2NixOutput == null; let
+  systemAbbrs = {
+    "aarch64-darwin" = "macos-arm64";
+    "x86_64-linux" = "linux-x64";
+  };
+  tailwindPath = "_build/tailwind-${systemAbbrs.${system}}";
+  esbuildPath = "_build/esbuild-${systemAbbrs.${system}}";
+in {
   inherit elixir erlang tailwind esbuild;
   app = mixRelease {
-    inherit src pname version mixFodDeps;
+    inherit src pname version;
+
+    mixFodDeps =
+      if mixDepsSha256 == null
+      then null
+      else
+        fetchMixDeps {
+          inherit version src;
+          pname = "${pname}-elixir-deps";
+          sha256 = mixDepsSha256;
+        };
+
+    mixNixDeps =
+      if mix2NixOutput == null
+      then {}
+      else
+        with pkgs;
+          mix2NixOutput {
+            inherit lib beamPackages;
+            # remove after https://github.com/NixOS/nixpkgs/pull/240354
+            overrides = let
+              overrideFun = old: {
+                postInstall = ''
+                  cp -v package.json "$out/lib/erlang/lib/${old.name}"
+                '';
+              };
+            in
+              _: prev: {
+                phoenix = prev.phoenix.overrideAttrs overrideFun;
+                phoenix_html = prev.phoenix_html.overrideAttrs overrideFun;
+                phoenix_live_view = prev.phoenix_live_view.overrideAttrs overrideFun;
+              };
+          };
 
     postUnpack = ''
       tailwind_version="$(${elixir}/bin/elixir ${self}/extract_version.ex ${src}/config/config.exs tailwind)"
@@ -72,8 +106,17 @@
     postBuild = ''
       install ${tailwind}/bin/tailwindcss ${tailwindPath}
       install ${esbuild}/bin/esbuild ${esbuildPath}
-      cp -a ../deps ./
-      mix assets.deploy
+      ${
+        if mixDepsSha256 == null
+        then ''
+          mkdir ./deps
+          cp -a _build/prod/lib/. ./deps/
+        ''
+        else ''
+          cp -a ../deps ./
+        ''
+      }
+      mix assets.deploy --no-deps-check
     '';
   };
 }
