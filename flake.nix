@@ -2,7 +2,7 @@
   description = "Build Elixir Phoenix apps with nix";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/master";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
   outputs = {
     self,
