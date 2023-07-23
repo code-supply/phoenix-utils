@@ -103,19 +103,22 @@ in {
     '';
 
     preBuild = ''
-      install ${tailwind}/bin/tailwindcss ${tailwindPath}
-      install ${esbuild}/bin/esbuild ${esbuildPath}
-
       if [[ -z "$mixDepsSha256" ]]
       then
         mkdir ./deps
         cp -a _build/prod/lib/. ./deps/
-      else
-        cp -a ../deps ./
       fi
     '';
 
     postBuild = ''
+      install ${pkgs.lib.getExe tailwind} ${tailwindPath}
+      install ${pkgs.lib.getExe esbuild} ${esbuildPath}
+
+      if [[ ! -z "$mixDepsSha256" ]]
+      then
+        cp -a ../deps ./
+      fi
+
       mix assets.deploy --no-deps-check
     '';
   };
