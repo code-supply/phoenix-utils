@@ -35,10 +35,31 @@ assert mixDepsSha256 != null -> mix2NixOutput == null; let
   };
   tailwindPath = "_build/tailwind-${systemAbbrs.${system}}";
   esbuildPath = "_build/esbuild-${systemAbbrs.${system}}";
+  mixNixDeps =
+    if mix2NixOutput == null
+    then {}
+    else
+      with pkgs;
+        (import mix2NixOutput) {
+          inherit lib beamPackages;
+          # remove after https://github.com/NixOS/nixpkgs/pull/240354
+          overrides = let
+            overrideFun = old: {
+              postInstall = ''
+                cp -v package.json "$out/lib/erlang/lib/${old.name}"
+              '';
+            };
+          in
+            _: prev: {
+              phoenix = prev.phoenix.overrideAttrs overrideFun;
+              phoenix_html = prev.phoenix_html.overrideAttrs overrideFun;
+              phoenix_live_view = prev.phoenix_live_view.overrideAttrs overrideFun;
+            };
+        };
 in {
   inherit elixir erlang tailwind esbuild;
   app = mixRelease {
-    inherit src pname version;
+    inherit src pname version mixNixDeps;
 
     mixFodDeps =
       if mixDepsSha256 == null
@@ -49,28 +70,6 @@ in {
           pname = "${pname}-elixir-deps";
           sha256 = mixDepsSha256;
         };
-
-    mixNixDeps =
-      if mix2NixOutput == null
-      then {}
-      else
-        with pkgs;
-          mix2NixOutput {
-            inherit lib beamPackages;
-            # remove after https://github.com/NixOS/nixpkgs/pull/240354
-            overrides = let
-              overrideFun = old: {
-                postInstall = ''
-                  cp -v package.json "$out/lib/erlang/lib/${old.name}"
-                '';
-              };
-            in
-              _: prev: {
-                phoenix = prev.phoenix.overrideAttrs overrideFun;
-                phoenix_html = prev.phoenix_html.overrideAttrs overrideFun;
-                phoenix_live_view = prev.phoenix_live_view.overrideAttrs overrideFun;
-              };
-          };
 
     postUnpack = ''
       tailwind_version="$(${elixir}/bin/elixir ${self}/extract_version.ex ${src}/config/config.exs tailwind)"
@@ -103,19 +102,20 @@ in {
       fi
     '';
 
-    postBuild = ''
+    preBuild = ''
       install ${tailwind}/bin/tailwindcss ${tailwindPath}
       install ${esbuild}/bin/esbuild ${esbuildPath}
-      ${
-        if mixDepsSha256 == null
-        then ''
-          mkdir ./deps
-          cp -a _build/prod/lib/. ./deps/
-        ''
-        else ''
-          cp -a ../deps ./
-        ''
-      }
+
+      if [[ -z "$mixDepsSha256" ]]
+      then
+        mkdir ./deps
+        cp -a _build/prod/lib/. ./deps/
+      else
+        cp -a ../deps ./
+      fi
+    '';
+
+    postBuild = ''
       mix assets.deploy --no-deps-check
     '';
   };
